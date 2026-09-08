@@ -1,29 +1,21 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
-from sqlalchemy import create_engine, text
-import urllib
+from sqlalchemy import text
+
+from config import ACCOMMODATION_DATABASE, ACCOMMODATION_TABLE, get_sqlalchemy_engine
 
 st.set_page_config(page_title="Accommodation Application", layout="centered")
 st.title("Accommodation Application")
 st.caption("Please complete the form below to apply for accommodation.")
 
-# ---------------------------------------------------------------------------
-# SQL Server connection (Windows Authentication)
-# ---------------------------------------------------------------------------
-SERVER = r"GHOST\MSSQLSERVER02"
-DATABASE = "stg_booking_com"
-TABLE = "dbo.stg_booking_com_raw"
+TABLE = ACCOMMODATION_TABLE
+
 
 @st.cache_resource
 def get_engine():
-    params = urllib.parse.quote_plus(
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-        f"SERVER={SERVER};"
-        f"DATABASE={DATABASE};"
-        f"Trusted_Connection=yes;"
-    )
-    return create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
+    return get_sqlalchemy_engine(ACCOMMODATION_DATABASE)
+
 
 engine = get_engine()
 

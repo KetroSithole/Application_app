@@ -1,12 +1,9 @@
 import streamlit as st
 import pandas as pd
-import pyodbc
-from sqlalchemy import create_engine
-import urllib
+
+from config import SQL_SERVER, SQL_DRIVER, get_pyodbc_connection, get_sqlalchemy_engine
 
 st.set_page_config(page_title="Data Explorer", page_icon="🗂️", layout="wide")
-
-SERVER = r"GHOST\MSSQLSERVER02"
 
 # ---------------------------------------------------------------------------
 # Styling
@@ -76,56 +73,35 @@ st.markdown(
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### 🔌 Connection")
-    st.caption(f"Server\n\n**{SERVER}**\n\nWindows Authentication")
+    st.caption(f"Server\n\n**{SQL_SERVER}**\n\nWindows Authentication")
     database = st.text_input("Database name", value="")
     driver = st.selectbox(
         "ODBC Driver",
         ["ODBC Driver 17 for SQL Server", "ODBC Driver 18 for SQL Server", "SQL Server"],
+        index=["ODBC Driver 17 for SQL Server", "ODBC Driver 18 for SQL Server", "SQL Server"].index(SQL_DRIVER)
+        if SQL_DRIVER in ["ODBC Driver 17 for SQL Server", "ODBC Driver 18 for SQL Server", "SQL Server"]
+        else 0,
     )
+    trust_cert = st.checkbox("Trust server certificate (Driver 18 only)", value=True)
     st.divider()
     st.caption("Connection is reused across both tabs.")
 
 
-def get_pyodbc_conn(db_name: str):
-    conn_str = (
-        f"DRIVER={{{driver}}};"
-        f"SERVER={SERVER};"
-        f"DATABASE={db_name};"
-        f"Trusted_Connection=yes;"
-    )
-    if driver == "ODBC Driver 18 for SQL Server":
-        conn_str += "TrustServerCertificate=yes;"
-    return pyodbc.connect(conn_str)
-
-
-def get_sqlalchemy_engine(db_name: str):
-    conn_str = (
-        f"DRIVER={{{driver}}};"
-        f"SERVER={SERVER};"
-        f"DATABASE={db_name};"
-        f"Trusted_Connection=yes;"
-    )
-    if driver == "ODBC Driver 18 for SQL Server":
-        conn_str += "TrustServerCertificate=yes;"
-    params = urllib.parse.quote_plus(conn_str)
-    return create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
-
-
 @st.cache_data(ttl=300)
-def run_query(db_name: str, query: str) -> pd.DataFrame:
-    with get_pyodbc_conn(db_name) as conn:
+def run_query(db_name: str, query: str, driver: str, trust_cert: bool) -> pd.DataFrame:
+    with get_pyodbc_connection(db_name, driver, trust_cert) as conn:
         return pd.read_sql(query, conn)
 
 
 @st.cache_data(ttl=300)
-def list_tables(db_name: str) -> pd.DataFrame:
+def list_tables(db_name: str, driver: str, trust_cert: bool) -> pd.DataFrame:
     query = """
         SELECT TABLE_SCHEMA, TABLE_NAME
         FROM INFORMATION_SCHEMA.TABLES
         WHERE TABLE_TYPE = 'BASE TABLE'
         ORDER BY TABLE_SCHEMA, TABLE_NAME
     """
-    return run_query(db_name, query)
+    return run_query(db_name, query, driver, trust_cert)
 
 
 tab_load, tab_browse = st.tabs(["⬆️  Load CSV into Database", "🔍  Browse Database"])
@@ -167,7 +143,7 @@ with tab_load:
 
                 if st.button("🚀 Load into database", type="primary"):
                     try:
-                        engine = get_sqlalchemy_engine(database)
+                        engine = get_sqlalchemy_engine(database, driver, trust_cert)
                         with st.spinner(f"Writing {len(csv_df):,} rows to {table_name}..."):
                             csv_df.to_sql(table_name, engine, if_exists=if_exists, index=False)
                         st.markdown(
@@ -192,7 +168,7 @@ with tab_browse:
         st.info("Enter a database name in the sidebar to connect.")
     else:
         try:
-            tables_df = list_tables(database)
+            tables_df = list_tables(database, driver, trust_cert)
         except Exception as e:
             st.markdown(f"<div class='status-card status-err'>Connection failed: {e}</div>", unsafe_allow_html=True)
             tables_df = None
@@ -211,7 +187,7 @@ with tab_browse:
                     if selected:
                         query = f"SELECT TOP {row_limit} * FROM {selected}"
                         try:
-                            db_df = run_query(database, query)
+                            db_df = run_query(database, query, driver, trust_cert)
                             st.dataframe(db_df, use_container_width=True)
                             st.caption(f"{len(db_df)} rows shown from {selected}")
                         except Exception as e:
@@ -222,7 +198,7 @@ with tab_browse:
                 sql = st.text_area("SQL query", value=default_sql, height=150)
                 if st.button("Run query"):
                     try:
-                        db_df = run_query(database, sql)
+                        db_df = run_query(database, sql, driver, trust_cert)
                         st.dataframe(db_df, use_container_width=True)
                         st.caption(f"{len(db_df)} rows returned")
                         st.download_button(
